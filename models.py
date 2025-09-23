@@ -3,16 +3,20 @@ import xgboost as xgb
 from catboost import CatBoostClassifier
 from joblib import dump, load
 import os
+from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 
-MODEL_DIR = 'models'
+# Определяем базовый путь
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_DIR = BASE_DIR / 'app' / 'models'
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-RF_MODEL_PATH = os.path.join(MODEL_DIR, 'rf_model.pkl')
-GB_MODEL_PATH = os.path.join(MODEL_DIR, 'gb_model.pkl')
-XGB_MODEL_PATH = os.path.join(MODEL_DIR, 'xgb_model.pkl')
-CATBOOST_MODEL_PATH = os.path.join(MODEL_DIR, 'catboost_model.pkl')
-SCALER_PATH = os.path.join(MODEL_DIR, 'scaler.pkl')
+# Пути к моделям
+RF_MODEL_PATH = MODEL_DIR / 'rf_model.pkl'
+GB_MODEL_PATH = MODEL_DIR / 'gb_model.pkl'
+XGB_MODEL_PATH = MODEL_DIR / 'xgb_model.pkl'
+CATBOOST_MODEL_PATH = MODEL_DIR / 'catboost_model.pkl'
+SCALER_PATH = MODEL_DIR / 'scaler.pkl'
 
 class ModelManager:
     def __init__(self):
@@ -53,22 +57,49 @@ class ModelManager:
         catboost.save_model(CATBOOST_MODEL_PATH)
 
     def load_models(self):
-        rf = load(RF_MODEL_PATH)
-        gb = load(GB_MODEL_PATH)
-        xgb = load(XGB_MODEL_PATH)
-        catboost = CatBoostClassifier()
-        catboost.load_model(CATBOOST_MODEL_PATH)
-        return {
-            'random_forest': rf,
-            'gradient_boosting': gb,
-            'xgb': xgb,
-            'catboost': catboost
-        }
+        try:
+            rf = load(RF_MODEL_PATH)
+            gb = load(GB_MODEL_PATH)
+            xgb = load(XGB_MODEL_PATH)
+            catboost = CatBoostClassifier()
+            catboost.load_model(CATBOOST_MODEL_PATH)
+            return {
+                'random_forest': rf,
+                'gradient_boosting': gb,
+                'xgb': xgb,
+                'catboost': catboost
+            }
+        except FileNotFoundError as e:
+            print(f"Ошибка загрузки модели: {e}")
+            return None
 
     def load_scaler(self):
-        return load(SCALER_PATH)
+        try:
+            return load(SCALER_PATH)
+        except FileNotFoundError:
+            print(f"Ошибка: файл скалера не найден по пути {SCALER_PATH}")
+            return None
 
     def save_scaler(self, scaler):
         dump(scaler, SCALER_PATH)
+
+    def train_and_save(self, X_train, y_train):
+        # Создаем модели
+        rf, gb, xgb_model, catboost = self.create_models()
+        
+        # Обучаем скалер
+        self.scaler = StandardScaler()
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        
+        # Обучаем модели
+        rf.fit(X_train_scaled, y_train)
+        gb.fit(X_train_scaled, y_train)
+        xgb_model.fit(X_train_scaled, y_train)
+        catboost.fit(X_train_scaled, y_train)
+        
+        # Сохраняем все
+        self.save_models(rf, gb, xgb_model, catboost)
+        self.save_scaler(self.scaler)
+        print("Модели и скалер успешно сохранены")
 
 
