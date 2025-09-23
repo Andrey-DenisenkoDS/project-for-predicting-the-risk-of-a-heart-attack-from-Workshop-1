@@ -1,88 +1,54 @@
-from fastapi import FastAPI, UploadFile, Request, HTTPException
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-import logging
-import uvicorn
-import argparse
-from model import Model
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import JSONResponse, FileResponse
+from pydantic import BaseModel
+from typing import List
+import pandas as pd
+from fastapi.responses import JSONResponse
+from utils import predict, load_models, load_scaler
+from schemas import PredictionResponse
+import io
 import os
+from dotenv import load_dotenv
 
-# Инициализация приложения
+# Загружаем переменные окружения
+load_dotenv()
+
 app = FastAPI()
-app.mount("/tmp", StaticFiles(directory="tmp"), name='images')
-templates = Jinja2Templates(directory="templates")
 
-# Создаем директорию для временных файлов, если её нет
-if not os.path.exists("tmp"):
-    os.makedirs("tmp")
+# Получаем путь к моделям из .env
+PRO_PATH = os.getenv('PRO_PATH', 'app/models')
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(name)s %(asctime)s %(levelname)s %(message)s"
-)
-logger = logging.getLogger(__name__)
+# Загружаем модели при старте приложения
+MODELS = load_models()
+SCALER = load_scaler()
 
-# Health check
-@app.get("/health")
-def health():
-    return {"status": "OK"}
-
-# Главная страница
-@app.get("/")
-def main(request: Request):
-    return templates.TemplateResponse(
-        "start_form.html", 
-        {"request": request}
-    )
-
-# Обработка запроса
-@app.post("/predict-file")
-async def predict_file(file: UploadFile, request: Request):
+@app.post("/predict/", response_model=List[PredictionResponse])
+async def predict_endpoint(file: UploadFile = File(...)):
     try:
-        # Проверяем, что файл действительно загружен
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="Файл не выбран")
+        # Читаем файл
+        contents = await file.read()
+        df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
         
-        save_pth = f"tmp/{file.filename}"
-        logger.info(f'Processing file - {save_pth}')
+        # Проверяем наличие обязательного столбца 'id'
+        if 'id' not in df.columns:
+            return JSONResponse(content={"error": "Файл должен содержать столбец 'id'"}, status_code=400)
         
-        # Сохранение файла
-        with open(save_pth, "wb") as fid:
-            fid.write(await file.read())
-            
-        # Предсказание
-        predictor = Model(0.6)
-        status, result = predictor(save_pth)
+        # Делаем предсказания
+        result_df = predict(df, MODELS, SCALER)
         
-        return templates.TemplateResponse(
-            "res_form.html", 
-            {
-                "request": request,
-                "res": status,
-                "message": status,
-                "path": result
-            }
-        )
+        # Создаем CSV файл
+        csv = result_df.to_csv(index=False)
         
-    except FileNotFoundError:
-        logger.error("Файл не найден")
-        raise HTTPException(status_code=404, detail="Файл не найден")
+        # Сохраняем временный файл
+        temp_file_path = 'predictions.csv'
+        with open(temp_file_path, 'w') as f:
+            f.write(csv)
         
-    except Exception as e:
-        logger.error(f"Ошибка обработки: {e}")
-        raise HTTPException(status_code=500, detail="Ошибка обработки файла")
-
-# Запуск сервера
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--port", default=8010, type=int)
-    parser.add_argument("--host", default="127.0.0.8", type=str)
-    args = parser.parse_args()
+        return FileResponse(temp_file_path, filename='predictions.csv')
     
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        reload=True
-    )
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+@app.get("/")
+async def root():
+    return {"message": "Welcome to Prediction Service!"}
