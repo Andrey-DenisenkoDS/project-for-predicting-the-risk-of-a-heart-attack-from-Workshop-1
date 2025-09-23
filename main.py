@@ -1,127 +1,103 @@
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks
-from fastapi.responses import JSONResponse, FileResponse
+# main.py
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List
+from typing import Dict, Any
+from models import ModelManager
+from sklearn.preprocessing import StandardScaler
 import pandas as pd
-import io
-import os
-import tempfile
-from dotenv import load_dotenv
-from utils import predict, load_models, load_scaler
-from schemas import PredictionResponse
-import logging
-from models import  # Убедитесь, что путь правильный
-from schemas import  # Убедитесь, что путь правильный
-from utils import predict, load_models, load_scaler  # Исправленный импорт
+import numpy as np
 
-# Настройка логирования
-logging.basicConfig(
-    level=os.getenv('LOG_LEVEL', 'INFO'),
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+app = FastAPI()
 
-# Загружаем переменные окружения
-load_dotenv()
+# Инициализация менеджера моделей
+model_manager = ModelManager()
 
-app = FastAPI(
-    title="Prediction Service",
-    description="API для предсказаний с использованием различных моделей машинного обучения",
-    version="1.0.0"
-)
-
-# Получаем путь к моделям из .env
-PRO_PATH = os.getenv('PRO_PATH', 'app/models')
-
-# Загружаем модели при старте приложения
-MODELS = load_models()
-SCALER = load_scaler()
-
-def remove_file(file_path: str):
-    """Функция для удаления временного файла"""
+# Загрузка моделей при старте приложения
+@app.on_event("startup")
+async def startup_event():
     try:
-        os.remove(file_path)
-    except OSError as e:
-        logger.error(f"Ошибка при удалении файла {file_path}: {str(e)}")
+        app.state.models = model_manager.load_models()
+        app.state.scaler = model_manager.load_scaler()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки моделей: {str(e)}")
 
-@app.post(
-    "/predict/",
-    response_model=List[PredictionResponse],
-    summary="Сделать предсказания по загруженным данным"
-)
-async def predict_endpoint(
-    file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = BackgroundTasks
-):
-    """
-    Эндпоинт для загрузки CSV файла и получения предсказаний
+# Определение схемы входных данных
+class InputData(BaseModel):
+    diabetes: bool
+    income: float
+    gender: str
+    family_history: bool
+    obesity: bool
+    alcohol_consumption: bool
+    previous_heart_problems: bool
+    medication_use: bool
+    diet: int
+    stress_level: int
+    physical_activity_days_per_week: int
+    age: float
+    cholesterol: float
+    heart_rate: float
+    exercise_hours_per_week: float
+    sedentary_hours_per_day: float
+    bmi: float
+    triglycerides: float
+    sleep_hours_per_day: float
+    blood_sugar: float
+    ck_mb: float
+    troponin: float
+    systolic_blood_pressure: float
+    diastolic_blood_pressure: float
+
+class PredictionResponse(BaseModel):
+    random_forest: float
+    gradient_boosting: float
+    xgb: float
+    catboost: float
+
+# Функция препроцессинга данных
+def preprocess_data(data: InputData, scaler: StandardScaler) -> np.ndarray:
+    # Преобразуем данные в DataFrame
+    df = pd.DataFrame([data.dict()])
     
-    Параметры:
-    - file: CSV файл с данными для предсказания
+    # Применяем скалер
+    processed_data = scaler.transform(df)
     
-    Возвращает:
-    - CSV файл с результатами предсказания
-    """
+    return processed_data
+
+# Эндпоинт для предсказаний
+@app.post("/predict/", response_model=PredictionResponse)
+async def predict_endpoint(data: InputData):
     try:
-        logger.info("Получен запрос на предсказание")
+        # Получаем модели и скалер
+        models = app.state.models
+        scaler = app.state.scaler
         
-        # Читаем файл
-        contents = await file.read()
-        df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
+        # Препроцессинг данных
+        processed_data = preprocess_data(data, scaler)
         
-        # Проверяем наличие обязательного столбца 'id'
-        if 'id' not in df.columns:
-            return JSONResponse(
-                content={"error": "Файл должен содержать столбец 'id'"},
-                status_code=400
-            )
+        # Получение предсказаний
+        rf_pred = models['random_forest'].predict_proba(processed_data)[:, 1]
+        gb_pred = models['gradient_boosting'].predict_proba(processed_data)[:, 1]
+        xgb_pred = models['xgb'].predict_proba(processed_data)[:, 1]
+        catboost_pred = models['catboost'].predict_proba(processed_data)[:, 1]
         
-        # Делаем предсказания
-        result_df = predict(df, MODELS, SCALER)
-        
-        # Создаем временный файл
-        with tempfile.NamedTemporaryFile(
-            delete=False, 
-            suffix='.csv', 
-            mode='w'
-        ) as temp_file:
-            result_df.to_csv(temp_file, index=False)
-            temp_file_path = temp_file.name
-        
-        # Добавляем задачу на удаление файла в фоновом режиме
-        background_tasks.add_task(remove_file, temp_file_path)
-        
-        return FileResponse(
-            temp_file_path, 
-            filename='predictions.csv',
-            background=background_tasks
-        )
+        return {
+            "random_forest": float(rf_pred[0]),
+            "gradient_boosting": float(gb_pred[0]),
+            "xgb": float(xgb_pred[0]),
+            "catboost": float(catboost_pred[0])
+        }
     
     except Exception as e:
-        logger.error(f"Произошла ошибка: {str(e)}")
-        return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
-        )
+        raise HTTPException(status_code=500, detail=f"Ошибка при предсказании: {str(e)}")
 
-@app.get(
-    "/",
-    summary="Проверка работоспособности сервиса"
-)
-async def root():
-    """
-    Корневой эндпоинт для проверки работы сервиса
-    """
-    return {"message": "Welcome to Prediction Service!"}
+# Документация
+@app.get("/")
+async def read_root():
+    return {"message": "Добро пожаловать в API прогнозирования"}
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """
-    Глобальный обработчик исключений
-    """
-    logger.error(f"Необработанное исключение: {str(exc)}")
-    return JSONResponse(
-        content={"error": "Произошла внутренняя ошибка сервера"},
-        status_code=500
-    )
+# Запуск приложения
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 

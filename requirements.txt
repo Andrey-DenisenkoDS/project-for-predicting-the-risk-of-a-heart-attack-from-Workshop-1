@@ -1,4 +1,10 @@
---extra-index-url=https://download.pytorch.org/whl/cu128
+fastapi
+uvicorn
+pydantic
+scikit-learn
+xgboost
+catboost
+joblib
 torch==2.7.1+cu128
 torchvision==0.22.1+cu128
 torchaudio==2.7.1+cu128
@@ -8,4 +14,5 @@ pydantic==2.11.7
 uvicorn==0.34.3
 Jinja2==3.1.6
 pydantic_settings==2.10.0
+
 
