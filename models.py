@@ -2,16 +2,23 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 import xgboost as xgb
 from catboost import CatBoostClassifier
 from joblib import dump, load
+from dotenv import load_dotenv
 import os
 from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 
-# Определяем базовый путь
-BASE_DIR = Path(__file__).resolve().parent
-MODEL_DIR = BASE_DIR / 'app' / 'models'
+# Загружаем переменные окружения
+load_dotenv()
+
+# Получаем базовый путь к проекту
+BASE_DIR = Path(__file__).parent.resolve()
+
+# Формируем путь к папке с моделями
+PRO_PATH = os.getenv('PRO_PATH', 'app/models')
+MODEL_DIR = BASE_DIR / PRO_PATH
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-# Пути к моделям
+# Определяем пути к конкретным моделям
 RF_MODEL_PATH = MODEL_DIR / 'rf_model.pkl'
 GB_MODEL_PATH = MODEL_DIR / 'gb_model.pkl'
 XGB_MODEL_PATH = MODEL_DIR / 'xgb_model.pkl'
@@ -98,8 +105,6 @@ class ModelManager:
         catboost.fit(X_train_scaled, y_train)
         
         # Сохраняем все
-        self.save_models(rf, gb, xgb_model, catboost)
-        self.save_scaler(self.scaler)
-        print("Модели и скалер успешно сохранены")
+        self.save
 
 
